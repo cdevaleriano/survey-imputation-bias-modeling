@@ -1,0 +1,353 @@
+---
+title: "Comparison of Bias of Means across different Hot-deck Imputation Methods in addressing Item Nonresponse for Annual Poverty Indicators Survey"
+author: "Christian Daniel E. Valeriano"
+date: "2025-11-27"
+output: html_document
+---
+
+# Import of Data
+
+```{r}
+library(readr)
+library(dplyr)
+df1 <- read_csv("APIS 2019 Dataset/APIS PUF 2019 RTM - Other Relevant Information and Drug Awareness and Prevention.CSV", 
+    col_types = cols(L5 = col_number()))
+
+df2 <-  read_csv("APIS 2019 Dataset/APIS PUF 2019 Household.CSV")
+
+
+chosen_variables <- c("HHID", "REG", "URB", "L5", "L4", "H05_AGE", "WRK_18", "H04_SEX", "FSIZE")
+patterns <- rep(1,length(chosen_variables))
+patterns[4] <- 0
+
+df <- full_join(df2, df1, by = c("HHID", "REG"))[chosen_variables]
+df$L4 <- as.numeric(df$L4)
+df$FSIZE <- as.numeric(df$FSIZE)
+df$REG <- as.factor(df$REG)
+df$URB <- as.factor(df$URB)
+df$WRK_18 <- as.factor(df$WRK_18)
+df$H04_SEX <- as.factor(df$H04_SEX)
+
+write_csv(df, "DF.csv")
+
+M <- 1000
+props <- seq(from = 0.1, to = 0.9, by = 0.1)
+
+rm(df1,df2)
+
+head(df)
+```
+
+# Summary Statistics
+
+## Overall Mean and Distribution of Average Monthly Income (L5)
+
+```{r}
+mean(df$L5)
+median(df$L5)
+DescTools::Mode(df$L5)
+sd(df$L5)
+mean_true <- mean(df$L5) 
+```
+
+# Measures of Location per Region & Urbanity
+
+```{r}
+library(DescTools)
+
+df %>%
+  group_by(REG,URB) %>%
+  summarize(mean = mean(L5),
+            median = median(L5),
+            mode = DescTools::Mode(L5),
+            sd = sd(L5))
+```
+
+# Average Nonresponse Means
+
+```{r}
+library(mice)
+library(DescTools)
+
+get_means.nonresp <- function(df, patterns, props, mech, M){
+  means <- numeric(length(props))
+  
+  for(i in 1:length(props)){
+    means[i] <- mean(
+                  replicate(M, 
+                    mean(
+                      ampute(df, patterns = patterns, prop = props[i], mech = mech)$amp$L5, 
+                      na.rm = TRUE)))}
+  
+  return(means)
+}
+```
+
+```{r}
+set.seed(142)
+options(warn = -1)
+means_MCAR.nonresp <- get_means.nonresp(df, patterns, props, mech = "MCAR", M)
+set.seed(142)
+options(warn = -1)
+means_MAR.nonresp <- get_means.nonresp(df, patterns, props, mech = "MAR", M)
+set.seed(142)
+options(warn = -1)
+means_MNAR.nonresp <- get_means.nonresp(df, patterns, props, mech = "MNAR", M)
+```
+
+# Average Mode Hot-Deck Imputed Means
+
+```{r}
+library(DescTools)
+
+get_means.modeHDImp <- function(df, patterns, props, mech, M){
+  means <- numeric(length(props))
+  
+  for(i in 1:length(props)){
+    means[i] <- mean(
+                  replicate(M, 
+                    mean(ampute(df, patterns = patterns, mech = mech, prop = props[i])$amp %>%
+                    group_by(REG,URB) %>%
+                    mutate(mode_imp = ifelse(is.na(L5), DescTools::Mode(L5, na.rm = TRUE), L5)) %>%
+                    .[["mode_imp"]])
+                  ))}
+  
+  return(means)
+}
+```
+
+```{r}
+set.seed(142)
+options(warn = -1)
+means_MCAR.modeHDImp <- get_means.modeHDImp(df, patterns, props, mech = "MCAR", M)
+set.seed(142)
+options(warn = -1)
+means_MAR.modeHDImp <- get_means.modeHDImp(df, patterns, props, mech = "MAR", M)
+set.seed(142)
+options(warn = -1)
+means_MNAR.modeHDImp <- get_means.modeHDImp(df, patterns, props, mech = "MNAR", M)
+```
+
+# Average Random Hot-Deck Imputed Means
+
+```{r}
+library(VIM)
+get_means.randomHDImp <- function(df, patterns, props, mech, M){
+  means <- numeric(length(props))
+  
+  for(i in 1:length(props)){
+    means[i] <- mean(
+                  replicate(M, 
+                    mean(
+                      hotdeck(
+                        data = ampute(df, patterns = patterns, mech = mech, prop = props[i])$amp,
+                        variable = "L5",
+                        domain_var = c("REG","URB"))$L5
+                      )))}
+  
+  return(means)
+}
+```
+
+```{r}
+set.seed(142)
+options(warn = -1)
+means_MCAR.randomHDImp <- get_means.randomHDImp(df, patterns, props, mech = "MCAR", M)
+set.seed(142)
+options(warn = -1)
+means_MAR.randomHDImp <- get_means.randomHDImp(df, patterns, props, mech = "MAR", M)
+set.seed(142)
+options(warn = -1)
+means_MNAR.randomHDImp <- get_means.randomHDImp(df, patterns, props, mech = "MNAR", M)
+```
+
+# Average Sequential Hot-Deck Imputed Means
+
+```{r}
+get_means.seqHDImp <- function(df, patterns, props, mech, M){
+  means <- numeric(length(props))
+  
+  for(i in 1:length(props)){
+    means[i] <- mean(
+                  replicate(M, 
+                    mean(
+                      hotdeck(
+                        data = ampute(df, patterns = patterns, mech = mech, prop = props[i])$amp,
+                        ord_var = "HHID",
+                        variable = "L5",
+                        domain_var = c("REG","URB"))$L5
+                      )))}
+  
+  return(means)
+}
+```
+
+```{r}
+set.seed(142)
+options(warn = -1)
+means_MCAR.seqHDImp <- get_means.seqHDImp(df, patterns, props, mech = "MCAR", M)
+set.seed(142)
+options(warn = -1)
+means_MAR.seqHDImp <- get_means.seqHDImp(df, patterns, props, mech = "MAR", M)
+set.seed(142)
+options(warn = -1)
+means_MNAR.seqHDImp <- get_means.seqHDImp(df, patterns, props, mech = "MNAR", M)
+```
+
+# Nearest Neighbor Hot-Deck Imputation
+
+```{r}
+NNinClus <- function(subset) {
+  kNN(subset, k = 1, variable = "L5", imp_var = FALSE)
+}
+
+get_means.NNHDImp <- function(df, patterns, props, mech, M){
+  means <- numeric(length(props))
+  
+  for(i in 1:length(props)){
+    means[i] <- mean(
+                  replicate(M, 
+                    mean(
+                      ampute(df, patterns = patterns, mech = mech, prop = props[i])$amp %>%
+                      group_by(REG,URB) %>%
+                      do(NNinClus(.)) %>%
+                      .[["L5"]]
+                      )))}
+  
+  return(means)
+}
+```
+
+```{r}
+set.seed(142)
+options(warn = -1)
+means_MCAR.NNHDImp <- get_means.NNHDImp(df, patterns, props, mech = "MCAR", M = 100)
+set.seed(142)
+options(warn = -1)
+means_MAR.NNHDImp <- get_means.NNHDImp(df, patterns, props, mech = "MAR", M = 100)
+set.seed(142)
+options(warn = -1)
+means_MNAR.NNHDImp <- get_means.NNHDImp(df, patterns, props, mech = "MNAR", M = 100)
+```
+
+# Results Visualizations
+
+## MCAR
+
+```{r}
+library(tidyr)
+library(ggplot2)
+data.frame(
+  Missing_Proportion = props,
+  Nonresponse_Bias = means_MCAR.nonresp - mean_true,
+  random = means_MCAR.randomHDImp - mean_true,
+  sequential = means_MCAR.seqHDImp - mean_true,
+  nearest_neighbor = means_MCAR.NNHDImp - mean_true) %>% 
+  pivot_longer(c("random", "sequential", "nearest_neighbor", "Nonresponse_Bias"),
+                names_to = "Hot Deck Method",
+                values_to = "Average Empirical Bias") %>%
+  ggplot(aes(x = Missing_Proportion)) +
+  geom_hline(yintercept = 0) +
+  geom_line(aes(y = `Average Empirical Bias`, color = `Hot Deck Method`, linetype = `Hot Deck Method`)) +
+  scale_linetype_manual(values = c("random" = "solid", "sequential" = "solid", "nearest_neighbor" = "solid",  "Nonresponse_Bias" = "dashed")) +
+  xlab("Missing Data Proportion") + 
+  ylim(-6500, 100)
+```
+
+## MAR
+
+```{r}
+data.frame(
+  Missing_Proportion = props,
+  Nonresponse_Bias = means_MAR.nonresp - mean_true,
+  random = means_MAR.randomHDImp - mean_true,
+  sequential = means_MAR.seqHDImp - mean_true,
+  nearest_neighbor = means_MAR.NNHDImp - mean_true) %>% 
+  pivot_longer(c("random", "sequential", "nearest_neighbor", "Nonresponse_Bias"),
+                names_to = "Hot Deck Method",
+                values_to = "Average Empirical Bias") %>%
+  ggplot(aes(x = Missing_Proportion)) +
+  geom_hline(yintercept = 0) +
+  geom_line(aes(y = `Average Empirical Bias`, color = `Hot Deck Method`, linetype = `Hot Deck Method`)) +
+  scale_linetype_manual(values = c( "random" = "solid", "sequential" = "solid", "nearest_neighbor" = "solid",  "Nonresponse_Bias" = "dashed")) +
+  xlab("Missing Data Proportion")  + 
+  ylim(-6500, 100)
+```
+
+## MNAR
+
+```{r}
+data.frame(
+  Missing_Proportion = props,
+  Nonresponse_Bias = means_MNAR.nonresp - mean_true,
+  random = means_MNAR.randomHDImp - mean_true,
+  sequential = means_MNAR.seqHDImp - mean_true,
+  nearest_neighbor = means_MNAR.NNHDImp - mean_true) %>% 
+  pivot_longer(c("random", "sequential", "nearest_neighbor", "Nonresponse_Bias"),
+                names_to = "Hot Deck Method",
+                values_to = "Average Empirical Bias") %>% 
+  ggplot(aes(x = Missing_Proportion)) +
+  geom_hline(yintercept = 0) +
+  geom_line(aes(y = `Average Empirical Bias`, color = `Hot Deck Method`, linetype = `Hot Deck Method`)) +
+  scale_linetype_manual(values = c("random" = "solid", "sequential" = "solid", "nearest_neighbor" = "solid",  "Nonresponse_Bias" = "dashed")) +
+  xlab("Missing Data Proportion") + 
+  geom_hline(yintercept = 0) +
+  ylim(-6500, 100)
+```
+
+# Reduction of Nonresponse Bias
+
+## MCAR
+
+```{r}
+data.frame(
+  Missing_Proportion = props,
+  mode = means_MCAR.modeHDImp - means_MCAR.nonresp,
+  random = means_MCAR.randomHDImp - means_MCAR.nonresp,
+  sequential = means_MCAR.seqHDImp - means_MCAR.nonresp,
+  nearest_neighbor = means_MCAR.NNHDImp - means_MCAR.nonresp) %>% 
+  pivot_longer(c("mode","random", "sequential", "nearest_neighbor"),
+                names_to = "Hot Deck Method",
+                values_to = "Bias Reduced") %>%
+  ggplot(aes(x = Missing_Proportion)) +
+  geom_line(aes(y = `Bias Reduced`, color = `Hot Deck Method`)) +
+  scale_color_manual(values = c("red", "green", "blue", "purple")) +
+  ylab("Bias \"Reduced\"") +
+  xlab("Missing Data Proportion")
+```
+
+## MAR
+
+```{r}
+data.frame(
+  Missing_Proportion = props,
+  mode = means_MAR.modeHDImp - means_MAR.nonresp,
+  random = means_MAR.randomHDImp - means_MAR.nonresp,
+  sequential = means_MAR.seqHDImp - means_MAR.nonresp,
+  nearest_neighbor = means_MAR.NNHDImp - means_MAR.nonresp) %>% 
+  pivot_longer(c("mode","random", "sequential", "nearest_neighbor"),
+                names_to = "Hot Deck Method",
+                values_to = "Bias Reduced") %>%
+  ggplot(aes(x = Missing_Proportion)) +
+  geom_line(aes(y = `Bias Reduced`, color = `Hot Deck Method`))+
+  ylab("Bias \"Reduced\"") +
+  xlab("Missing Data Proportion")
+```
+
+## MNAR
+
+```{r}
+data.frame(
+  Missing_Proportion = props,
+  mode = means_MNAR.modeHDImp - means_MNAR.nonresp,
+  random = means_MNAR.randomHDImp - means_MNAR.nonresp,
+  sequential = means_MNAR.seqHDImp - means_MNAR.nonresp,
+  nearest_neighbor = means_MNAR.NNHDImp - means_MNAR.nonresp) %>% 
+  pivot_longer(c("mode","random", "sequential", "nearest_neighbor"),
+                names_to = "Hot Deck Method",
+                values_to = "Bias Reduced") %>%
+  ggplot(aes(x = Missing_Proportion)) +
+  geom_line(aes(y = `Bias Reduced`, color = `Hot Deck Method`)) +
+  ylab("Bias \"Reduced\"") +
+  xlab("Missing Data Proportion")
+```
